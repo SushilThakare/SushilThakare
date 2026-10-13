@@ -1,168 +1,163 @@
 #!/usr/bin/env python3
 """
 make_ascii_svg.py
-Generates profile-ascii.svg — a placeholder terminal frame
-that types "[ photo goes here ]" character by character.
-When you supply a real headshot, replace this with a proper
-ASCII art conversion using Pillow + numpy.
-
-Usage:
-  python3 scripts/make_ascii_svg.py
-  (or with photo: python3 scripts/make_ascii_svg.py path/to/photo.jpg)
+Converts data/source-prepped.png (or any prepped image) into an animated monochrome ASCII SVG:
+- Grid: ~100 columns x 53 rows
+- Density ramp: " .`:-=+*cs#%@" (bright -> dark)
+- Monochrome light-gray glyphs on dark background
+- SMIL horizontal clip wipe with a block cursor riding each row from top to bottom
+- Matches dimensions of 370x340 to align with info-card.svg and the 860px layout
 """
 
 import sys
 from pathlib import Path
+from PIL import Image
+import numpy as np
 
 OUTPUT = Path(__file__).parent.parent / "profile-ascii.svg"
+DEFAULT_INPUT = Path(__file__).parent.parent / "data" / "source-prepped.png"
 
-MONO = "JetBrains Mono, Fira Code, Consolas, monospace"
-BG       = "#0d1117"
+# Guide ramp: bright (sparse) -> dark (dense)
+RAMP = " .`:-=+*cs#%@"
+
+# Layout constants
+W, H = 370, 340
+HEADER_H = 38
+PAD_X = 14
+PAD_Y = 10
+
+# Monospace font settings for 100 columns x 53 rows
+COLS = 100
+ROWS = 52
+FONT_SIZE = 5.2
+CHAR_W = 3.42
+LINE_H = 5.4
+
+# Terminal palette
+BG_OUTER = "#0d1117"
 BG_INNER = "#161b22"
-BORDER   = "#30363d"
-GREEN    = "#39d353"
-MUTED    = "#6e7681"
-WHITE    = "#e6edf3"
-RED_DOT  = "#ff5f57"
-YEL_DOT  = "#febc2e"
-GRN_DOT  = "#28c840"
+BORDER = "#30363d"
+TEXT_COLOR = "#c9d1d9"       # Clean monochrome light-gray
+CURSOR_COLOR = "#58a6ff"     # Subtle terminal cursor
+RED_DOT = "#ff5f57"
+YEL_DOT = "#febc2e"
+GRN_DOT = "#28c840"
+MUTED = "#6e7681"
 
-W = 370
-H = 320
-HEADER_H = 36
+def image_to_ascii(image_path: Path):
+    img = Image.open(image_path).convert("L")
+    img_resized = img.resize((COLS, ROWS), Image.Resampling.LANCZOS)
+    arr = np.array(img_resized)
+    
+    ascii_rows = []
+    ramp_len = len(RAMP)
+    
+    # Prepped image: subject is darker than pure white background (255)
+    # Bright (255) maps to index 0 (" "), Dark (0) maps to index -1 ("@")
+    for row in arr:
+        row_str = []
+        for px in row:
+            # px is 0..255. Invert so 255 (white bg) -> 0 (space)
+            inverted = 255 - px
+            idx = int(inverted / 255.0 * (ramp_len - 1))
+            row_str.append(RAMP[idx])
+        # Replace xml special chars
+        escaped_row = "".join(row_str).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        ascii_rows.append(escaped_row)
+    return ascii_rows
 
-# Placeholder ASCII art lines — replace with real ASCII when photo provided
-PLACEHOLDER_LINES = [
-    "  ╔══════════════════════════╗  ",
-    "  ║                          ║  ",
-    "  ║                          ║  ",
-    "  ║      [ photo goes here ] ║  ",
-    "  ║                          ║  ",
-    "  ║   Drop your photo into   ║  ",
-    "  ║   the workspace and run: ║  ",
-    "  ║                          ║  ",
-    "  ║  python3 scripts/        ║  ",
-    "  ║    make_ascii_svg.py     ║  ",
-    "  ║    path/to/photo.jpg     ║  ",
-    "  ║                          ║  ",
-    "  ╚══════════════════════════╝  ",
-]
-
-
-def char_delay(row: int, col: int, chars_per_row: int) -> str:
-    """Sequential typing delay: each char appears one after another."""
-    idx = row * chars_per_row + col
-    return f"{idx * 18}ms"
-
-
-def build_placeholder_svg() -> str:
-    rows = PLACEHOLDER_LINES
-    n_rows = len(rows)
-    max_cols = max(len(r) for r in rows)
-
-    content_h = H - HEADER_H
-    font_size = min(content_h // (n_rows + 2), 13)
-    line_h = font_size + 3
-    start_y = HEADER_H + (content_h - n_rows * line_h) // 2 + font_size
-
-    row_svgs = []
-    for ri, row_text in enumerate(rows):
-        y = start_y + ri * line_h
-        # Animate entire row at once (simpler for placeholder)
-        delay = f"{ri * 60}ms"
-        row_svgs.append(
-            f'<text x="{W // 2}" y="{y}" '
-            f'font-family="{MONO}" font-size="{font_size}" fill="{GREEN}" '
-            f'text-anchor="middle" opacity="0" '
-            f'style="animation:rowFade 0.3s ease forwards;animation-delay:{delay}">'
-            f'{row_text}</text>'
+def build_animated_svg(rows: list) -> str:
+    total_rows = len(rows)
+    total_time = 2.4  # seconds for full portrait reveal
+    row_dur = total_time / total_rows
+    
+    content_w = COLS * CHAR_W
+    
+    clips = []
+    text_elements = []
+    
+    start_x = PAD_X
+    start_y = HEADER_H + PAD_Y + 4
+    
+    for i, row in enumerate(rows):
+        y = start_y + i * LINE_H
+        row_start = i * row_dur
+        clip_id = f"clip-r{i}"
+        
+        # SMIL animated clip path for this row
+        clips.append(f'''    <clipPath id="{clip_id}">
+      <rect x="{start_x}" y="{y - FONT_SIZE + 1:.1f}" width="0" height="{LINE_H:.1f}">
+        <animate attributeName="width" from="0" to="{content_w:.1f}" dur="{row_dur:.3f}s" begin="{row_start:.3f}s" fill="freeze" calcMode="linear"/>
+      </rect>
+    </clipPath>''')
+        
+        # Text element clipped
+        text_elements.append(
+            f'    <text x="{start_x}" y="{y:.1f}" clip-path="url(#{clip_id})" '
+            f'font-family="monospace, Courier New" font-size="{FONT_SIZE:.1f}" fill="{TEXT_COLOR}">'
+            f'{row}</text>'
         )
-
-    # Cursor blink at bottom
-    cur_y = start_y + n_rows * line_h + 4
-    row_svgs.append(
-        f'<rect x="{W // 2 - 4}" y="{cur_y - font_size}" width="8" height="{font_size + 1}" '
-        f'fill="{GREEN}" style="animation:blink 1s step-end infinite"/>'
-    )
-
-    content = "\n    ".join(row_svgs)
-
+        
+        # Cursor riding the row wipe
+        text_elements.append(
+            f'    <rect x="{start_x}" y="{y - FONT_SIZE + 1.2:.1f}" width="4" height="{LINE_H - 1:.1f}" fill="{CURSOR_COLOR}" opacity="0">'
+            f'<animate attributeName="opacity" values="1;1;0" keyTimes="0;0.99;1" dur="{row_dur:.3f}s" begin="{row_start:.3f}s" fill="freeze"/>'
+            f'<animate attributeName="x" from="{start_x}" to="{start_x + content_w:.1f}" dur="{row_dur:.3f}s" begin="{row_start:.3f}s" fill="freeze" calcMode="linear"/>'
+            f'</rect>'
+        )
+    
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">
   <defs>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&amp;display=swap');
-      @keyframes rowFade {{
-        from {{ opacity:0; transform:translateY(4px); }}
-        to   {{ opacity:1; transform:translateY(0);   }}
-      }}
-      @keyframes blink {{
-        0%,100% {{ opacity:1; }}
-        50%      {{ opacity:0; }}
-      }}
-    </style>
-    <clipPath id="ascii-clip"><rect width="{W}" height="{H}" rx="10"/></clipPath>
+    <!-- Rounded window clip -->
+    <clipPath id="window-clip">
+      <rect width="{W}" height="{H}" rx="10" ry="10"/>
+    </clipPath>
+    <!-- Row clip paths for typewriter wipe -->
+{chr(10).join(clips)}
   </defs>
 
-  <g clip-path="url(#ascii-clip)">
-    <!-- Background -->
-    <rect width="{W}" height="{H}" fill="{BG}"/>
+  <g clip-path="url(#window-clip)">
+    <!-- Terminal window background -->
+    <rect width="{W}" height="{H}" fill="{BG_OUTER}"/>
 
     <!-- Title bar -->
     <rect width="{W}" height="{HEADER_H}" fill="{BG_INNER}"/>
     <line x1="0" y1="{HEADER_H}" x2="{W}" y2="{HEADER_H}" stroke="{BORDER}" stroke-width="1"/>
 
-    <!-- Traffic lights -->
-    <circle cx="18" cy="{HEADER_H // 2}" r="5" fill="{RED_DOT}"/>
-    <circle cx="36" cy="{HEADER_H // 2}" r="5" fill="{YEL_DOT}"/>
-    <circle cx="54" cy="{HEADER_H // 2}" r="5" fill="{GRN_DOT}"/>
+    <!-- Mac traffic light buttons -->
+    <circle cx="18" cy="{HEADER_H // 2}" r="6" fill="{RED_DOT}"/>
+    <circle cx="38" cy="{HEADER_H // 2}" r="6" fill="{YEL_DOT}"/>
+    <circle cx="58" cy="{HEADER_H // 2}" r="6" fill="{GRN_DOT}"/>
 
-    <!-- Title -->
+    <!-- Window Title -->
     <text x="{W // 2}" y="{HEADER_H // 2 + 4}"
-      font-family="{MONO}" font-size="12" fill="{MUTED}" text-anchor="middle">~ profile.ascii</text>
+      font-family="monospace, Courier New" font-size="12" fill="{MUTED}"
+      text-anchor="middle">~ sushil.ascii</text>
 
-    <!-- ASCII content -->
-    {content}
+    <!-- Animated ASCII rows -->
+{chr(10).join(text_elements)}
   </g>
 </svg>'''
     return svg
 
-
 def main():
-    photo_path = sys.argv[1] if len(sys.argv) > 1 else None
-
-    if photo_path:
-        # When a real photo is provided, use Pillow + numpy for ASCII conversion
-        try:
-            from PIL import Image
-            import numpy as np
-
-            img = Image.open(photo_path).convert("L")  # grayscale
-            # Resize to fit terminal columns (aspect corrected)
-            cols = 55
-            rows_target = 28
-            img = img.resize((cols, rows_target), Image.LANCZOS)
-            arr = np.array(img)
-
-            density = " .`:-=+*cs#%@"
-            ascii_rows = []
-            for row in arr:
-                line = ""
-                for px in row:
-                    line += density[int(px / 255 * (len(density) - 1))]
-                ascii_rows.append(line)
-
-            global PLACEHOLDER_LINES
-            PLACEHOLDER_LINES = ascii_rows
-            print(f"🖼   Converted {photo_path} to {cols}×{rows_target} ASCII")
-        except ImportError:
-            print("⚠️   Pillow/numpy not installed – falling back to placeholder")
-        except Exception as e:
-            print(f"⚠️   Could not process photo ({e}) – falling back to placeholder")
-
-    svg = build_placeholder_svg()
+    inp = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_INPUT
+    inp_path = Path(inp)
+    
+    if not inp_path.exists():
+        # If source-prepped doesn't exist yet, fall back to source-photo.jpg
+        fallback = Path(__file__).parent.parent / "source-photo.jpg"
+        if fallback.exists():
+            inp_path = fallback
+        else:
+            print(f"❌ Neither {inp_path} nor source-photo.jpg found!")
+            sys.exit(1)
+            
+    print(f"Converting {inp_path} to animated ASCII SVG...")
+    rows = image_to_ascii(inp_path)
+    svg = build_animated_svg(rows)
     OUTPUT.write_text(svg, encoding="utf-8")
-    print(f"✅  profile-ascii.svg written → {OUTPUT}")
-
+    print(f"✅ profile-ascii.svg written successfully -> {OUTPUT}")
 
 if __name__ == "__main__":
     main()
