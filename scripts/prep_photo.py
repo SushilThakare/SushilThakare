@@ -16,7 +16,17 @@ from PIL import Image
 
 def prep_photo(input_path: Path, output_path: Path):
     print(f"📸 Loading {input_path}...")
-    input_img = Image.open(input_path)
+    input_img = Image.open(input_path).convert("RGB")
+
+    # Keep the face and shoulders in frame so the ASCII grid is not spent on ceiling.
+    width, height = input_img.size
+    crop_box = (
+        int(width * 0.07),
+        int(height * 0.20),
+        int(width * 0.93),
+        int(height * 0.90),
+    )
+    input_img = input_img.crop(crop_box)
     
     # Try background removal with u2netp (fast ~4.7MB model)
     try:
