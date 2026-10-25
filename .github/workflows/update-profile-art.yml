@@ -1,6 +1,11 @@
 name: 🔄 Update Profile Art
 
 on:
+  push:
+    paths:
+      - 'source-photo.jpg'
+      - 'scripts/**'
+      - '.github/workflows/update-profile-art.yml'
   schedule:
     # Runs daily at 00:30 UTC (06:00 IST)
     - cron: '30 0 * * *'
@@ -29,6 +34,12 @@ jobs:
       - name: 🕸️  Fetch contributions
         run: python3 scripts/fetch_contributions.py
 
+      - name: 📸  Prepare profile photo
+        run: python3 scripts/prep_photo.py
+
+      - name: 🎨  Render ASCII profile art
+        run: python3 scripts/make_ascii_svg.py
+
       - name: 🎨  Render heatmap SVG
         run: python3 scripts/render_heatmap_svg.py
 
@@ -39,6 +50,6 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: auto-update contribution heatmap [skip ci]"
-          file_pattern: "contrib-heatmap.svg info-card.svg data/contributions.json"
+          file_pattern: "profile-ascii.svg data/source-prepped.png contrib-heatmap.svg info-card.svg data/contributions.json"
           commit_user_name: "github-actions[bot]"
           commit_user_email: "github-actions[bot]@users.noreply.github.com"
